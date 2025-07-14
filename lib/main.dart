@@ -39,11 +39,29 @@ class CalendarView extends StatefulWidget {
 class _CalendarViewState extends State<CalendarView> {
   DateTime _focusedDay = DateTime.now();
   Set<String> _meditatedDays = {};
+  // ⭐ 1. 현재 달의 묵상 횟수를 저장할 변수 추가
+  int _currentMonthCount = 0;
 
   @override
   void initState() {
     super.initState();
     _loadMeditatedDays();
+  }
+
+  // ⭐ 2. 현재 달의 묵상 횟수를 계산하고 화면을 업데이트하는 함수 추가
+  void _updateCurrentMonthCount(DateTime focusedDay) {
+    int count = 0;
+    // 저장된 모든 묵상 기록을 확인
+    for (String dayString in _meditatedDays) {
+      DateTime date = DateTime.parse(dayString);
+      // 현재 보고 있는 달력의 '년'과 '월'이 같은 기록만 셈
+      if (date.year == focusedDay.year && date.month == focusedDay.month) {
+        count++;
+      }
+    }
+    setState(() {
+      _currentMonthCount = count;
+    });
   }
 
   Future<void> _loadMeditatedDays() async {
@@ -52,6 +70,8 @@ class _CalendarViewState extends State<CalendarView> {
     setState(() {
       _meditatedDays = Set.from(savedDays);
     });
+    // 앱이 처음 켜질 때 횟수 계산
+    _updateCurrentMonthCount(_focusedDay);
   }
 
   void _showMeditationDialog(DateTime day) async {
@@ -91,7 +111,7 @@ class _CalendarViewState extends State<CalendarView> {
                     TextField(
                       controller: memoController,
                       decoration: const InputDecoration(
-                        hintText: "오늘의 깨달음을 메모하세요...",
+                        hintText: "깨달음이나 기도를 메모해보세요.",
                         border: OutlineInputBorder(),
                       ),
                       maxLines: 3,
@@ -119,6 +139,8 @@ class _CalendarViewState extends State<CalendarView> {
                         'meditatedDays', _meditatedDays.toList());
                     await prefs.setString(
                         '${dayString}_memo', memoController.text);
+                    // 저장이 완료된 후 횟수 다시 계산
+                    _updateCurrentMonthCount(_focusedDay);
                     Navigator.of(context).pop();
                   },
                   child: const Text('저장'),
@@ -137,16 +159,16 @@ class _CalendarViewState extends State<CalendarView> {
       appBar: AppBar(
         title: const Text('묵상 달력'),
         actions: [
-          // '오늘' 날짜로 이동하는 버튼
           IconButton(
             icon: const Icon(Icons.today),
             onPressed: () {
               setState(() {
                 _focusedDay = DateTime.now();
               });
+              // '오늘' 버튼을 눌렀을 때도 횟수 다시 계산
+              _updateCurrentMonthCount(DateTime.now());
             },
           ),
-          // '메모 목록' 페이지로 이동하는 버튼 (새로 추가!)
           IconButton(
             icon: const Icon(Icons.list_alt),
             onPressed: () {
@@ -158,50 +180,73 @@ class _CalendarViewState extends State<CalendarView> {
           ),
         ],
       ),
-      body: TableCalendar(
-        locale: 'ko_KR',
-        firstDay: DateTime.utc(2022, 1, 1),
-        lastDay: DateTime.utc(2032, 12, 31),
-        focusedDay: _focusedDay,
-        onDaySelected: (selectedDay, focusedDay) {
-          setState(() {
-            _focusedDay = focusedDay;
-          });
-          _showMeditationDialog(selectedDay);
-        },
-        calendarBuilders: CalendarBuilders(
-          defaultBuilder: (context, day, focusedDay) {
-            final dayString = DateFormat('yyyy-MM-dd').format(day);
-            if (_meditatedDays.contains(dayString)) {
-              return const Center(
-                  child: Icon(Icons.favorite, color: Colors.red));
-            }
-            return null;
-          },
-          todayBuilder: (context, day, focusedDay) {
-            final dayString = DateFormat('yyyy-MM-dd').format(day);
-            return Container(
-              margin: const EdgeInsets.all(4.0),
-              alignment: Alignment.center,
-              decoration: const BoxDecoration(
-                color: Colors.black26,
-                shape: BoxShape.circle,
-              ),
-              child: _meditatedDays.contains(dayString)
-                  ? const Icon(Icons.favorite, color: Colors.red)
-                  : Text(day.day.toString(),
-                      style: const TextStyle(color: Colors.white)),
-            );
-          },
-        ),
+      body: Column(
+        children: [
+          TableCalendar(
+            locale: 'ko_KR',
+            firstDay: DateTime.utc(2022, 1, 1),
+            lastDay: DateTime.utc(2032, 12, 31),
+            focusedDay: _focusedDay,
+            // ⭐ 3. 달력을 넘길 때마다 횟수를 다시 계산하도록 추가
+            onPageChanged: (focusedDay) {
+              _focusedDay = focusedDay; // 포커스된 날짜를 업데이트하는 것이 중요
+              _updateCurrentMonthCount(focusedDay);
+            },
+            onDaySelected: (selectedDay, focusedDay) {
+              setState(() {
+                _focusedDay = focusedDay;
+              });
+              _showMeditationDialog(selectedDay);
+            },
+            calendarBuilders: CalendarBuilders(
+              defaultBuilder: (context, day, focusedDay) {
+                final dayString = DateFormat('yyyy-MM-dd').format(day);
+                if (_meditatedDays.contains(dayString)) {
+                  return const Center(
+                      child: Icon(Icons.favorite, color: Colors.red));
+                }
+                return null;
+              },
+              todayBuilder: (context, day, focusedDay) {
+                final dayString = DateFormat('yyyy-MM-dd').format(day);
+                return Container(
+                  margin: const EdgeInsets.all(4.0),
+                  alignment: Alignment.center,
+                  decoration: const BoxDecoration(
+                    color: Colors.black26,
+                    shape: BoxShape.circle,
+                  ),
+                  child: _meditatedDays.contains(dayString)
+                      ? const Icon(Icons.favorite, color: Colors.red)
+                      : Text(day.day.toString(),
+                          style: const TextStyle(color: Colors.white)),
+                );
+              },
+            ),
+          ),
+          // ⭐ 4. 묵상 횟수를 보여주는 UI 위젯 추가
+          Padding(
+            padding: const EdgeInsets.only(top: 24.0, bottom: 8.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.favorite, color: Colors.red, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  '이번 달 묵상 일수: $_currentMonthCount',
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-// -------------------------------------------------------------------
-// ## 메모 목록 페이지 (새로 추가된 부분) ##
-// -------------------------------------------------------------------
+// (메모 목록 페이지 코드는 이전과 동일하여 생략... 아래에 그대로 붙여넣습니다)
 class MemoListPage extends StatefulWidget {
   const MemoListPage({super.key});
 
@@ -210,7 +255,6 @@ class MemoListPage extends StatefulWidget {
 }
 
 class _MemoListPageState extends State<MemoListPage> {
-  // 메모 데이터를 저장할 Map (예: '2025-07-15': '오늘의 메모 내용')
   Map<String, String> _memos = {};
 
   @override
@@ -219,17 +263,14 @@ class _MemoListPageState extends State<MemoListPage> {
     _loadAllMemos();
   }
 
-  // 저장된 모든 메모를 불러오는 함수
   Future<void> _loadAllMemos() async {
     final prefs = await SharedPreferences.getInstance();
-    final allKeys = prefs.getKeys(); // 스마트폰에 저장된 모든 키를 가져옴
+    final allKeys = prefs.getKeys();
     final Map<String, String> tempMemos = {};
 
     for (String key in allKeys) {
-      // 키가 '_memo'로 끝나는 경우에만 (메모 데이터인 경우에만)
       if (key.endsWith('_memo')) {
         final memoContent = prefs.getString(key) ?? '';
-        // 메모 내용이 비어있지 않은 경우에만 목록에 추가
         if (memoContent.isNotEmpty) {
           final dateString = key.replaceAll('_memo', '');
           tempMemos[dateString] = memoContent;
@@ -238,7 +279,6 @@ class _MemoListPageState extends State<MemoListPage> {
     }
 
     setState(() {
-      // 날짜의 역순으로 정렬해서 최신 메모가 위로 오도록
       _memos = Map.fromEntries(
         tempMemos.entries.toList()..sort((a, b) => b.key.compareTo(a.key)),
       );
@@ -251,7 +291,6 @@ class _MemoListPageState extends State<MemoListPage> {
       appBar: AppBar(
         title: const Text('나의 묵상 기록'),
       ),
-      // 메모가 하나도 없을 경우와 있을 경우를 나눠서 보여줌
       body: _memos.isEmpty
           ? const Center(
               child: Text(
@@ -264,7 +303,6 @@ class _MemoListPageState extends State<MemoListPage> {
               itemBuilder: (context, index) {
                 final dateString = _memos.keys.elementAt(index);
                 final memoContent = _memos.values.elementAt(index);
-                // 날짜 형식을 '2025년 7월 15일' 처럼 예쁘게 변경
                 final displayDate =
                     DateFormat('y년 M월 d일').format(DateTime.parse(dateString));
 
