@@ -233,7 +233,7 @@ class _CalendarViewState extends State<CalendarView> {
                 const Icon(Icons.favorite, color: Colors.red, size: 20),
                 const SizedBox(width: 8),
                 Text(
-                  '이번 달 묵상 일수: $_currentMonthCount',
+                  '+$_currentMonthCount',
                   style: const TextStyle(
                       fontSize: 16, fontWeight: FontWeight.bold),
                 ),
