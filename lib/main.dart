@@ -6,11 +6,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
-// Firebase 관련 패키지 import
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart'; // 👈 Firebase 인증
-import 'package:google_sign_in/google_sign_in.dart'; // 👈 구글 사인인
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'firebase_options.dart';
 
 // 앱의 시작점
@@ -22,54 +21,113 @@ void main() async {
   initializeDateFormatting().then((_) => runApp(const MyApp()));
 }
 
-// 앱의 기본 구조
-class MyApp extends StatelessWidget {
+// ===================================================================
+// ## (수정) 앱의 기본 구조 (테마 상태 관리를 위해 StatefulWidget으로 변경) ##
+// ===================================================================
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  ThemeMode _themeMode = ThemeMode.system; // 기본 테마는 시스템 설정 따름
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTheme(); // 앱 시작 시 저장된 테마 불러오기
+  }
+
+  // 저장된 테마 설정을 불러오는 함수
+  void _loadTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    final themeString = prefs.getString('themeMode') ?? 'system';
+    setState(() {
+      if (themeString == 'light') {
+        _themeMode = ThemeMode.light;
+      } else if (themeString == 'dark') {
+        _themeMode = ThemeMode.dark;
+      } else {
+        _themeMode = ThemeMode.system;
+      }
+    });
+  }
+
+  // 테마를 변경하고 앱을 재시작하라는 안내를 보여주는 함수
+  void _changeTheme(ThemeMode themeMode) async {
+    final prefs = await SharedPreferences.getInstance();
+    String themeString = 'system';
+    if (themeMode == ThemeMode.light) {
+      themeString = 'light';
+    } else if (themeMode == ThemeMode.dark) {
+      themeString = 'dark';
+    }
+
+    await prefs.setString('themeMode', themeString);
+
+    // UI를 즉시 업데이트하고 사용자에게 재시작 안내
+    setState(() {
+      _themeMode = themeMode;
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('테마가 변경되었습니다. 앱을 다시 시작하면 완벽하게 적용됩니다.')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '묵상 달력',
+      // ⭐ 1. 라이트/다크 테마 정의
       theme: ThemeData(
+        brightness: Brightness.light,
         primarySwatch: Colors.pink,
       ),
-      // 앱의 첫 화면을 AuthGate로 변경
-      home: const AuthGate(),
+      darkTheme: ThemeData(
+        brightness: Brightness.dark,
+        primarySwatch: Colors.pink,
+        // 다크 모드에 어울리는 다른 색상들을 여기에 추가할 수 있습니다.
+      ),
+      // ⭐ 2. 현재 설정된 테마 모드를 적용
+      themeMode: _themeMode,
+      // 앱의 첫 화면을 AuthGate로 설정
+      home: AuthGate(changeTheme: _changeTheme), // 👈 테마 변경 함수 전달
       debugShowCheckedModeBanner: false,
     );
   }
 }
 
 // ===================================================================
-// ## (신규) AuthGate: 로그인 상태에 따라 화면을 결정하는 관문 ##
+// ## AuthGate (테마 변경 함수를 전달받도록 수정) ##
 // ===================================================================
 class AuthGate extends StatelessWidget {
-  const AuthGate({super.key});
+  final Function(ThemeMode) changeTheme;
+  const AuthGate({super.key, required this.changeTheme});
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
-      // Firebase의 인증 상태 변경을 실시간으로 감지
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
-        // 로그인 상태가 아니면 로그인 화면을 보여줌
         if (!snapshot.hasData) {
           return const LoginScreen();
         }
-        // 로그인 상태이면 메인 화면을 보여줌
-        return const MainScreen();
+        return MainScreen(changeTheme: changeTheme); // 👈 MainScreen에 함수 전달
       },
     );
   }
 }
 
-// ===================================================================
-// ## (신규) 로그인 화면 ##
-// ===================================================================
+// 이하 생략된 코드는 이전과 동일합니다.
+// (기존의 LoginScreen, MainScreen, CalendarView 등 모든 코드가 포함되어 있습니다)
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
 
-  // 구글 로그인 처리 함수
   Future<void> _signInWithGoogle() async {
     try {
       final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
@@ -96,7 +154,6 @@ class LoginScreen extends StatelessWidget {
           children: [
             const Text('묵상 달력에 오신 것을 환영합니다!', style: TextStyle(fontSize: 20)),
             const SizedBox(height: 30),
-            // 구글 로그인 버튼
             ElevatedButton(
               onPressed: _signInWithGoogle,
               child: const Text('Google 계정으로 로그인'),
@@ -108,13 +165,9 @@ class LoginScreen extends StatelessWidget {
   }
 }
 
-// (이하 기존 코드는 생략... 아래 전체 코드를 복사해서 사용하세요)
-// (기존의 MainScreen, CalendarView, GuestbookScreen 등 모든 코드가 포함되어 있습니다)
-// ===================================================================
-// ## 하단 네비게이션 바와 화면 전체를 관리하는 메인 스크린 ##
-// ===================================================================
 class MainScreen extends StatefulWidget {
-  const MainScreen({super.key});
+  final Function(ThemeMode) changeTheme;
+  const MainScreen({super.key, required this.changeTheme});
 
   @override
   State<MainScreen> createState() => _MainScreenState();
@@ -123,11 +176,17 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
 
-  static const List<Widget> _widgetOptions = <Widget>[
-    CalendarView(),
-    GuestbookScreen(),
-    NotionLinkScreen(),
-  ];
+  late final List<Widget> _widgetOptions;
+
+  @override
+  void initState() {
+    super.initState();
+    _widgetOptions = <Widget>[
+      CalendarView(changeTheme: widget.changeTheme), // 👈 CalendarView에 함수 전달
+      GuestbookScreen(),
+      NotionLinkScreen(),
+    ];
+  }
 
   void _onItemTapped(int index) {
     setState(() {
@@ -150,7 +209,7 @@ class _MainScreenState extends State<MainScreen> {
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.chat_bubble_outline),
-            label: '기도제목', // '방명록'에서 '기도제목'으로 변경
+            label: '기도제목',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.article),
@@ -165,220 +224,17 @@ class _MainScreenState extends State<MainScreen> {
 }
 
 // ===================================================================
-// ## (수정) 2. 기도제목 화면 (삭제 기능 구현) ##
+// ## 캘린더 화면 (설정 버튼 추가 및 테마 변경 함수 전달받기) ##
 // ===================================================================
-class GuestbookScreen extends StatefulWidget {
-  const GuestbookScreen({super.key});
-
-  @override
-  State<GuestbookScreen> createState() => _GuestbookScreenState();
-}
-
-class _GuestbookScreenState extends State<GuestbookScreen> {
-  // 글쓰기 팝업을 띄우는 함수 (기존과 동일)
-  void _showAddMessageDialog() {
-    final messageController = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('기도제목 작성'),
-          content: TextField(
-            controller: messageController,
-            decoration: const InputDecoration(hintText: "기도제목을 입력하세요"),
-            autofocus: true,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('취소'),
-            ),
-            TextButton(
-              onPressed: () async {
-                final message = messageController.text;
-                final user = FirebaseAuth.instance.currentUser;
-                if (message.isNotEmpty && user != null) {
-                  await FirebaseFirestore.instance.collection('guestbook').add({
-                    'text': message,
-                    'createdAt': Timestamp.now(),
-                    'authorName': user.displayName ?? '이름없음',
-                    'authorUid': user.uid,
-                  });
-                  if (mounted) Navigator.of(dialogContext).pop();
-                }
-              },
-              child: const Text('저장'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  // ================================================
-  // ⭐ 1. (신규) 삭제 확인 팝업을 띄우는 함수
-  // ================================================
-  void _showDeleteConfirmDialog(String docId) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('삭제 확인'),
-          content: const Text('이 기도제목을 정말로 삭제하시겠습니까?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('취소'),
-            ),
-            TextButton(
-              onPressed: () async {
-                // Firestore에서 해당 ID의 문서를 삭제
-                await FirebaseFirestore.instance
-                    .collection('guestbook')
-                    .doc(docId)
-                    .delete();
-                if (mounted) Navigator.of(context).pop();
-              },
-              child: const Text('삭제', style: TextStyle(color: Colors.red)),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  // ================================================
-  // ⭐ 1. (신규) 수정 팝업을 띄우는 함수
-  // ================================================
-  void _showEditMessageDialog(String docId, String existingText) {
-    // 텍스트 컨트롤러에 기존 내용을 미리 채워둠
-    final messageController = TextEditingController(text: existingText);
-
-    showDialog(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('기도제목 수정'),
-          content: TextField(
-            controller: messageController,
-            decoration: const InputDecoration(hintText: "수정할 내용을 입력하세요"),
-            autofocus: true,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('취소'),
-            ),
-            TextButton(
-              onPressed: () async {
-                final newText = messageController.text;
-                if (newText.isNotEmpty) {
-                  // Firestore에서 해당 ID의 문서를 찾아 'text' 필드를 업데이트
-                  await FirebaseFirestore.instance
-                      .collection('guestbook')
-                      .doc(docId)
-                      .update({'text': newText});
-                  if (mounted) Navigator.of(dialogContext).pop();
-                }
-              },
-              child: const Text('수정'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('오롯이 기도제목'),
-        actions: [
-          if (user != null)
-            IconButton(
-              icon: const Icon(Icons.logout),
-              onPressed: () async {
-                await GoogleSignIn().signOut();
-                await FirebaseAuth.instance.signOut();
-              },
-            ),
-        ],
-      ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('guestbook')
-            .orderBy('createdAt', descending: true)
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return const Center(child: Text('아직 등록된 기도제목이 없습니다.'));
-          }
-          return ListView(
-            padding: const EdgeInsets.only(bottom: 80),
-            children: snapshot.data!.docs.map((DocumentSnapshot document) {
-              Map<String, dynamic> data =
-                  document.data()! as Map<String, dynamic>;
-              final authorName = data['authorName'] ?? '익명';
-              final authorUid = data['authorUid'];
-              final bool isMine = (user != null && user.uid == authorUid);
-
-              return ListTile(
-                title: Text(data['text']),
-                subtitle: Text(
-                  '$authorName · ${DateFormat('y. M. d. a h:mm', 'ko').format((data['createdAt'] as Timestamp).toDate())}',
-                ),
-                trailing: isMine
-                    ? Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.edit, size: 20),
-                            onPressed: () {
-                              _showEditMessageDialog(document.id, data['text']);
-                            },
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.delete, size: 20),
-                            // ================================================
-                            // ⭐ 2. 삭제 버튼에 새로운 함수 연결
-                            // ================================================
-                            onPressed: () {
-                              // document.id는 Firestore의 각 문서가 가진 고유 ID입니다.
-                              _showDeleteConfirmDialog(document.id);
-                            },
-                          ),
-                        ],
-                      )
-                    : null,
-              );
-            }).toList(),
-          );
-        },
-      ),
-      floatingActionButton: user != null
-          ? FloatingActionButton(
-              onPressed: _showAddMessageDialog,
-              child: const Icon(Icons.add),
-            )
-          : null,
-    );
-  }
-}
-// (이하 캘린더, 메모 목록, 교회소식 화면 코드는 이전과 거의 동일합니다)
-
 class CalendarView extends StatefulWidget {
-  const CalendarView({super.key});
+  final Function(ThemeMode) changeTheme;
+  const CalendarView({super.key, required this.changeTheme});
   @override
   State<CalendarView> createState() => _CalendarViewState();
 }
 
 class _CalendarViewState extends State<CalendarView> {
+  // ...(이하 캘린더 화면의 기존 코드는 생략)...
   DateTime _focusedDay = DateTime.now();
   Set<String> _meditatedDays = {};
   int _currentMonthCount = 0;
@@ -493,31 +349,42 @@ class _CalendarViewState extends State<CalendarView> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('묵상 달력'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.today),
-            onPressed: () {
-              setState(() => _focusedDay = DateTime.now());
-              _updateCurrentMonthCount(DateTime.now());
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.list_alt),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const MemoListPage()),
-              );
-            },
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            TableCalendar(
+        appBar: AppBar(
+          title: const Text('묵상 달력'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.today),
+              onPressed: () {
+                setState(() => _focusedDay = DateTime.now());
+                _updateCurrentMonthCount(DateTime.now());
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.list_alt),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const MemoListPage()),
+                );
+              },
+            ),
+            // ⭐ 3. 설정 페이지로 이동하는 아이콘 버튼 추가
+            IconButton(
+              icon: const Icon(Icons.settings),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) =>
+                          SettingsScreen(changeTheme: widget.changeTheme)),
+                );
+              },
+            ),
+          ],
+        ),
+        body: SingleChildScrollView(
+            child: Column(children: [
+          TableCalendar(
               locale: 'ko_KR',
               firstDay: DateTime.utc(2022, 1, 1),
               lastDay: DateTime.utc(2032, 12, 31),
@@ -530,18 +397,17 @@ class _CalendarViewState extends State<CalendarView> {
                 setState(() => _focusedDay = focusedDay);
                 _showMeditationDialog(selectedDay);
               },
-              calendarBuilders: CalendarBuilders(
-                defaultBuilder: (context, day, focusedDay) {
-                  final dayString = DateFormat('yyyy-MM-dd').format(day);
-                  if (_meditatedDays.contains(dayString)) {
-                    return const Center(
-                        child: Icon(Icons.favorite, color: Colors.red));
-                  }
-                  return null;
-                },
-                todayBuilder: (context, day, focusedDay) {
-                  final dayString = DateFormat('yyyy-MM-dd').format(day);
-                  return Container(
+              calendarBuilders:
+                  CalendarBuilders(defaultBuilder: (context, day, focusedDay) {
+                final dayString = DateFormat('yyyy-MM-dd').format(day);
+                if (_meditatedDays.contains(dayString)) {
+                  return const Center(
+                      child: Icon(Icons.favorite, color: Colors.red));
+                }
+                return null;
+              }, todayBuilder: (context, day, focusedDay) {
+                final dayString = DateFormat('yyyy-MM-dd').format(day);
+                return Container(
                     margin: const EdgeInsets.all(4.0),
                     alignment: Alignment.center,
                     decoration: const BoxDecoration(
@@ -549,30 +415,263 @@ class _CalendarViewState extends State<CalendarView> {
                     child: _meditatedDays.contains(dayString)
                         ? const Icon(Icons.favorite, color: Colors.red)
                         : Text(day.day.toString(),
-                            style: const TextStyle(color: Colors.white)),
-                  );
-                },
-              ),
-            ),
-            Padding(
+                            style: const TextStyle(color: Colors.white)));
+              })),
+          Padding(
               padding: const EdgeInsets.only(top: 24.0, bottom: 8.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.favorite, color: Colors.red, size: 20),
-                  const SizedBox(width: 8),
-                  Text(
-                    '+$_currentMonthCount',
+              child:
+                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Icon(Icons.favorite, color: Colors.red, size: 20),
+                const SizedBox(width: 8),
+                Text('+$_currentMonthCount',
                     style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+                        fontSize: 16, fontWeight: FontWeight.bold))
+              ]))
+        ])));
+  }
+}
+
+// ===================================================================
+// ## (신규) 설정 화면 ##
+// ===================================================================
+class SettingsScreen extends StatefulWidget {
+  // 테마 변경 함수를 상위 위젯으로부터 전달받음
+  final Function(ThemeMode) changeTheme;
+  const SettingsScreen({super.key, required this.changeTheme});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  ThemeMode _currentTheme = ThemeMode.system;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCurrentTheme();
+  }
+
+  void _loadCurrentTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    final themeString = prefs.getString('themeMode') ?? 'system';
+    setState(() {
+      if (themeString == 'light') {
+        _currentTheme = ThemeMode.light;
+      } else if (themeString == 'dark') {
+        _currentTheme = ThemeMode.dark;
+      } else {
+        _currentTheme = ThemeMode.system;
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('설정'),
+      ),
+      body: ListView(
+        children: [
+          RadioListTile<ThemeMode>(
+            title: const Text('라이트 모드'),
+            value: ThemeMode.light,
+            groupValue: _currentTheme,
+            onChanged: (ThemeMode? value) {
+              if (value != null) {
+                setState(() => _currentTheme = value);
+                widget.changeTheme(value);
+              }
+            },
+          ),
+          RadioListTile<ThemeMode>(
+            title: const Text('다크 모드'),
+            value: ThemeMode.dark,
+            groupValue: _currentTheme,
+            onChanged: (ThemeMode? value) {
+              if (value != null) {
+                setState(() => _currentTheme = value);
+                widget.changeTheme(value);
+              }
+            },
+          ),
+          RadioListTile<ThemeMode>(
+            title: const Text('시스템 설정 따름'),
+            value: ThemeMode.system,
+            groupValue: _currentTheme,
+            onChanged: (ThemeMode? value) {
+              if (value != null) {
+                setState(() => _currentTheme = value);
+                widget.changeTheme(value);
+              }
+            },
+          ),
+        ],
       ),
     );
+  }
+}
+
+// (기도제목, 교회소식, 메모 목록 페이지 코드는 이전과 동일합니다.)
+class GuestbookScreen extends StatefulWidget {
+  const GuestbookScreen({super.key});
+  @override
+  State<GuestbookScreen> createState() => _GuestbookScreenState();
+}
+
+class _GuestbookScreenState extends State<GuestbookScreen> {
+  void _showAddMessageDialog() {
+    final messageController = TextEditingController();
+    showDialog(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+              title: const Text('기도제목 작성'),
+              content: TextField(
+                  controller: messageController,
+                  decoration: const InputDecoration(hintText: "기도제목을 입력하세요"),
+                  autofocus: true),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('취소')),
+                TextButton(
+                    onPressed: () async {
+                      final message = messageController.text;
+                      final user = FirebaseAuth.instance.currentUser;
+                      if (message.isNotEmpty && user != null) {
+                        await FirebaseFirestore.instance
+                            .collection('guestbook')
+                            .add({
+                          'text': message,
+                          'createdAt': Timestamp.now(),
+                          'authorName': user.displayName ?? '이름없음',
+                          'authorUid': user.uid
+                        });
+                        if (mounted) Navigator.of(dialogContext).pop();
+                      }
+                    },
+                    child: const Text('저장'))
+              ]);
+        });
+  }
+
+  void _showDeleteConfirmDialog(String docId) {
+    showDialog(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+              title: const Text('삭제 확인'),
+              content: const Text('이 기도제목을 정말로 삭제하시겠습니까?'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('취소')),
+                TextButton(
+                    onPressed: () async {
+                      await FirebaseFirestore.instance
+                          .collection('guestbook')
+                          .doc(docId)
+                          .delete();
+                      if (mounted) Navigator.of(context).pop();
+                    },
+                    child:
+                        const Text('삭제', style: TextStyle(color: Colors.red)))
+              ]);
+        });
+  }
+
+  void _showEditMessageDialog(String docId, String existingText) {
+    final messageController = TextEditingController(text: existingText);
+    showDialog(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+              title: const Text('기도제목 수정'),
+              content: TextField(
+                  controller: messageController,
+                  decoration: const InputDecoration(hintText: "수정할 내용을 입력하세요"),
+                  autofocus: true),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('취소')),
+                TextButton(
+                    onPressed: () async {
+                      final newText = messageController.text;
+                      if (newText.isNotEmpty) {
+                        await FirebaseFirestore.instance
+                            .collection('guestbook')
+                            .doc(docId)
+                            .update({'text': newText});
+                        if (mounted) Navigator.of(dialogContext).pop();
+                      }
+                    },
+                    child: const Text('수정'))
+              ]);
+        });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    return Scaffold(
+        appBar: AppBar(title: const Text('오롯이 기도제목'), actions: [
+          if (user != null)
+            IconButton(
+                icon: const Icon(Icons.logout),
+                onPressed: () async {
+                  await GoogleSignIn().signOut();
+                  await FirebaseAuth.instance.signOut();
+                })
+        ]),
+        body: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('guestbook')
+                .orderBy('createdAt', descending: true)
+                .snapshots(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                return const Center(child: Text('아직 등록된 기도제목이 없습니다.'));
+              }
+              return ListView(
+                  padding: const EdgeInsets.only(bottom: 80),
+                  children:
+                      snapshot.data!.docs.map((DocumentSnapshot document) {
+                    Map<String, dynamic> data =
+                        document.data()! as Map<String, dynamic>;
+                    final authorName = data['authorName'] ?? '익명';
+                    final authorUid = data['authorUid'];
+                    final bool isMine = (user != null && user.uid == authorUid);
+                    return ListTile(
+                        title: Text(data['text']),
+                        subtitle: Text(
+                            '$authorName · ${DateFormat('y. M. d. a h:mm', 'ko').format((data['createdAt'] as Timestamp).toDate())}'),
+                        trailing: isMine
+                            ? Row(mainAxisSize: MainAxisSize.min, children: [
+                                IconButton(
+                                    icon: const Icon(Icons.edit, size: 20),
+                                    onPressed: () {
+                                      _showEditMessageDialog(
+                                          document.id, data['text']);
+                                    }),
+                                IconButton(
+                                    icon: const Icon(Icons.delete, size: 20),
+                                    onPressed: () {
+                                      _showDeleteConfirmDialog(document.id);
+                                    })
+                              ])
+                            : null);
+                  }).toList());
+            }),
+        floatingActionButton: user != null
+            ? FloatingActionButton(
+                onPressed: _showAddMessageDialog, child: const Icon(Icons.add))
+            : null);
   }
 }
 
