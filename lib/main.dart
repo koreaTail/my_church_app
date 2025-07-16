@@ -5,7 +5,7 @@ import 'package:table_calendar/table_calendar.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:webview_flutter/webview_flutter.dart'; // 👈 이 줄을 추가
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -675,37 +675,64 @@ class _GuestbookScreenState extends State<GuestbookScreen> {
   }
 }
 
-class NotionLinkScreen extends StatelessWidget {
+// ===================================================================
+// ## (재수정) 2. 교회 소식 화면 (WebView 방식) ##
+// ===================================================================
+class NotionLinkScreen extends StatefulWidget {
   const NotionLinkScreen({super.key});
-  Future<void> _launchNotionUrl() async {
-    final Uri url =
-        Uri.parse('https://orosi.notion.site/1dc6f70e570c4a36bcf66dc7efb04318');
-    if (!await launchUrl(url)) {
-      throw Exception('Could not launch $url');
-    }
+
+  @override
+  State<NotionLinkScreen> createState() => _NotionLinkScreenState();
+}
+
+class _NotionLinkScreenState extends State<NotionLinkScreen> {
+  // 웹뷰를 제어하기 위한 컨트롤러
+  late final WebViewController _controller;
+  // 로딩 상태를 표시하기 위한 변수
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // 웹뷰 컨트롤러 초기화 및 노션 링크 로드
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(const Color(0x00000000))
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageFinished: (String url) {
+            // 페이지 로딩이 끝나면 로딩 표시를 없앰
+            if (mounted) {
+              setState(() {
+                _isLoading = false;
+              });
+            }
+          },
+        ),
+      )
+      ..loadRequest(Uri.parse(
+          'https://orosi.notion.site/1dc6f70e570c4a36bcf66dc7efb04318'));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        appBar: AppBar(title: const Text('교회 소식')),
-        body: Center(
-            child:
-                Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          const Icon(Icons.article_outlined, size: 80, color: Colors.grey),
-          const SizedBox(height: 20),
-          const Text('교회 주보, 소식 등을 보려면\n아래 버튼을 눌러주세요.',
-              textAlign: TextAlign.center, style: TextStyle(fontSize: 16)),
-          const SizedBox(height: 30),
-          ElevatedButton.icon(
-              icon: const Icon(Icons.open_in_new),
-              label: const Text('교회 소식 페이지 열기'),
-              onPressed: _launchNotionUrl,
-              style: ElevatedButton.styleFrom(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                  textStyle: const TextStyle(fontSize: 16)))
-        ])));
+      appBar: AppBar(
+        title: const Text('교회 소식'),
+      ),
+      // Stack을 사용해 로딩 인디케이터와 웹뷰를 겹쳐서 보여줌
+      body: Stack(
+        children: [
+          WebViewWidget(controller: _controller),
+          // 로딩 중일 때만 로딩 인디케이터를 보여줌
+          if (_isLoading)
+            const Center(
+              child: CircularProgressIndicator(),
+            ),
+        ],
+      ),
+    );
   }
 }
 
