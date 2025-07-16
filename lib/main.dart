@@ -165,7 +165,7 @@ class _MainScreenState extends State<MainScreen> {
 }
 
 // ===================================================================
-// ## (수정) 2. 기도제목 화면 (구 방명록) ##
+// ## (수정) 2. 기도제목 화면 (삭제 기능 구현) ##
 // ===================================================================
 class GuestbookScreen extends StatefulWidget {
   const GuestbookScreen({super.key});
@@ -175,6 +175,7 @@ class GuestbookScreen extends StatefulWidget {
 }
 
 class _GuestbookScreenState extends State<GuestbookScreen> {
+  // 글쓰기 팝업을 띄우는 함수 (기존과 동일)
   void _showAddMessageDialog() {
     final messageController = TextEditingController();
     showDialog(
@@ -189,33 +190,21 @@ class _GuestbookScreenState extends State<GuestbookScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () {
-                Navigator.of(dialogContext).pop();
-              },
+              onPressed: () => Navigator.of(dialogContext).pop(),
               child: const Text('취소'),
             ),
             TextButton(
               onPressed: () async {
                 final message = messageController.text;
-                // 현재 로그인한 사용자 정보 가져오기
                 final user = FirebaseAuth.instance.currentUser;
-
                 if (message.isNotEmpty && user != null) {
-                  try {
-                    // Firestore에 사용자 정보와 함께 저장
-                    await FirebaseFirestore.instance
-                        .collection('guestbook')
-                        .add({
-                      'text': message,
-                      'createdAt': Timestamp.now(),
-                      'authorName': user.displayName ?? '이름없음', // 사용자 이름
-                      'authorUid': user.uid, // 사용자 고유 ID
-                    });
-
-                    if (mounted) Navigator.of(dialogContext).pop();
-                  } catch (e) {
-                    print('메시지 저장 중 에러 발생: $e');
-                  }
+                  await FirebaseFirestore.instance.collection('guestbook').add({
+                    'text': message,
+                    'createdAt': Timestamp.now(),
+                    'authorName': user.displayName ?? '이름없음',
+                    'authorUid': user.uid,
+                  });
+                  if (mounted) Navigator.of(dialogContext).pop();
                 }
               },
               child: const Text('저장'),
@@ -226,16 +215,88 @@ class _GuestbookScreenState extends State<GuestbookScreen> {
     );
   }
 
+  // ================================================
+  // ⭐ 1. (신규) 삭제 확인 팝업을 띄우는 함수
+  // ================================================
+  void _showDeleteConfirmDialog(String docId) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('삭제 확인'),
+          content: const Text('이 기도제목을 정말로 삭제하시겠습니까?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('취소'),
+            ),
+            TextButton(
+              onPressed: () async {
+                // Firestore에서 해당 ID의 문서를 삭제
+                await FirebaseFirestore.instance
+                    .collection('guestbook')
+                    .doc(docId)
+                    .delete();
+                if (mounted) Navigator.of(context).pop();
+              },
+              child: const Text('삭제', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // ================================================
+  // ⭐ 1. (신규) 수정 팝업을 띄우는 함수
+  // ================================================
+  void _showEditMessageDialog(String docId, String existingText) {
+    // 텍스트 컨트롤러에 기존 내용을 미리 채워둠
+    final messageController = TextEditingController(text: existingText);
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('기도제목 수정'),
+          content: TextField(
+            controller: messageController,
+            decoration: const InputDecoration(hintText: "수정할 내용을 입력하세요"),
+            autofocus: true,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('취소'),
+            ),
+            TextButton(
+              onPressed: () async {
+                final newText = messageController.text;
+                if (newText.isNotEmpty) {
+                  // Firestore에서 해당 ID의 문서를 찾아 'text' 필드를 업데이트
+                  await FirebaseFirestore.instance
+                      .collection('guestbook')
+                      .doc(docId)
+                      .update({'text': newText});
+                  if (mounted) Navigator.of(dialogContext).pop();
+                }
+              },
+              child: const Text('수정'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    // 현재 로그인 상태를 확인
     final user = FirebaseAuth.instance.currentUser;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('기도의 벽'),
+        title: const Text('오롯이 기도제목'),
         actions: [
-          // 로그인 상태일 때만 로그아웃 버튼 표시
           if (user != null)
             IconButton(
               icon: const Icon(Icons.logout),
@@ -263,20 +324,43 @@ class _GuestbookScreenState extends State<GuestbookScreen> {
             children: snapshot.data!.docs.map((DocumentSnapshot document) {
               Map<String, dynamic> data =
                   document.data()! as Map<String, dynamic>;
-              // 작성자 이름 표시
               final authorName = data['authorName'] ?? '익명';
+              final authorUid = data['authorUid'];
+              final bool isMine = (user != null && user.uid == authorUid);
 
               return ListTile(
                 title: Text(data['text']),
                 subtitle: Text(
                   '$authorName · ${DateFormat('y. M. d. a h:mm', 'ko').format((data['createdAt'] as Timestamp).toDate())}',
                 ),
+                trailing: isMine
+                    ? Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.edit, size: 20),
+                            onPressed: () {
+                              _showEditMessageDialog(document.id, data['text']);
+                            },
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete, size: 20),
+                            // ================================================
+                            // ⭐ 2. 삭제 버튼에 새로운 함수 연결
+                            // ================================================
+                            onPressed: () {
+                              // document.id는 Firestore의 각 문서가 가진 고유 ID입니다.
+                              _showDeleteConfirmDialog(document.id);
+                            },
+                          ),
+                        ],
+                      )
+                    : null,
               );
             }).toList(),
           );
         },
       ),
-      // 로그인 상태일 때만 글쓰기 버튼 표시
       floatingActionButton: user != null
           ? FloatingActionButton(
               onPressed: _showAddMessageDialog,
@@ -286,7 +370,6 @@ class _GuestbookScreenState extends State<GuestbookScreen> {
     );
   }
 }
-
 // (이하 캘린더, 메모 목록, 교회소식 화면 코드는 이전과 거의 동일합니다)
 
 class CalendarView extends StatefulWidget {
@@ -395,7 +478,7 @@ class _CalendarViewState extends State<CalendarView> {
                     await prefs.setString(
                         '${dayString}_memo', memoController.text);
                     _updateCurrentMonthCount(_focusedDay);
-                    navigator.pop();
+                    if (mounted) navigator.pop();
                   },
                   child: const Text('저장'),
                 ),
