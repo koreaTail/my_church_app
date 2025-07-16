@@ -9,17 +9,16 @@ import 'package:url_launcher/url_launcher.dart';
 // Firebase 관련 패키지 import
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // 👈 Firebase 인증
+import 'package:google_sign_in/google_sign_in.dart'; // 👈 구글 사인인
 import 'firebase_options.dart';
 
-// 앱의 시작점 (Firebase 초기화 추가)
+// 앱의 시작점
 void main() async {
-  // main 함수에서 비동기 작업을 처리하기 위해 필요
   WidgetsFlutterBinding.ensureInitialized();
-  // Firebase 앱 초기화
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  // 한국어 달력 설정을 위해 필요
   initializeDateFormatting().then((_) => runApp(const MyApp()));
 }
 
@@ -34,12 +33,83 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.pink,
       ),
-      home: const MainScreen(),
+      // 앱의 첫 화면을 AuthGate로 변경
+      home: const AuthGate(),
       debugShowCheckedModeBanner: false,
     );
   }
 }
 
+// ===================================================================
+// ## (신규) AuthGate: 로그인 상태에 따라 화면을 결정하는 관문 ##
+// ===================================================================
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      // Firebase의 인증 상태 변경을 실시간으로 감지
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        // 로그인 상태가 아니면 로그인 화면을 보여줌
+        if (!snapshot.hasData) {
+          return const LoginScreen();
+        }
+        // 로그인 상태이면 메인 화면을 보여줌
+        return const MainScreen();
+      },
+    );
+  }
+}
+
+// ===================================================================
+// ## (신규) 로그인 화면 ##
+// ===================================================================
+class LoginScreen extends StatelessWidget {
+  const LoginScreen({super.key});
+
+  // 구글 로그인 처리 함수
+  Future<void> _signInWithGoogle() async {
+    try {
+      final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+      if (googleUser != null) {
+        final GoogleSignInAuthentication googleAuth =
+            await googleUser.authentication;
+        final OAuthCredential credential = GoogleAuthProvider.credential(
+          accessToken: googleAuth.accessToken,
+          idToken: googleAuth.idToken,
+        );
+        await FirebaseAuth.instance.signInWithCredential(credential);
+      }
+    } catch (e) {
+      print('구글 로그인 실패: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text('묵상 달력에 오신 것을 환영합니다!', style: TextStyle(fontSize: 20)),
+            const SizedBox(height: 30),
+            // 구글 로그인 버튼
+            ElevatedButton(
+              onPressed: _signInWithGoogle,
+              child: const Text('Google 계정으로 로그인'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// (이하 기존 코드는 생략... 아래 전체 코드를 복사해서 사용하세요)
+// (기존의 MainScreen, CalendarView, GuestbookScreen 등 모든 코드가 포함되어 있습니다)
 // ===================================================================
 // ## 하단 네비게이션 바와 화면 전체를 관리하는 메인 스크린 ##
 // ===================================================================
@@ -53,10 +123,9 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
 
-  // 하단 탭에 연결될 화면 목록 (방명록 추가!)
   static const List<Widget> _widgetOptions = <Widget>[
     CalendarView(),
-    GuestbookScreen(), // 👈 방명록 화면 추가
+    GuestbookScreen(),
     NotionLinkScreen(),
   ];
 
@@ -70,7 +139,6 @@ class _MainScreenState extends State<MainScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: IndexedStack(
-        // 👈 화면 상태를 유지하기 위해 IndexedStack으로 변경
         index: _selectedIndex,
         children: _widgetOptions,
       ),
@@ -81,8 +149,8 @@ class _MainScreenState extends State<MainScreen> {
             label: '묵상달력',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.chat_bubble_outline), // 👈 방명록 아이콘
-            label: '방명록',
+            icon: Icon(Icons.chat_bubble_outline),
+            label: '기도제목', // '방명록'에서 '기도제목'으로 변경
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.article),
@@ -97,7 +165,7 @@ class _MainScreenState extends State<MainScreen> {
 }
 
 // ===================================================================
-// ## (신규) 2. 방명록 화면 ##
+// ## (수정) 2. 기도제목 화면 (구 방명록) ##
 // ===================================================================
 class GuestbookScreen extends StatefulWidget {
   const GuestbookScreen({super.key});
@@ -107,43 +175,49 @@ class GuestbookScreen extends StatefulWidget {
 }
 
 class _GuestbookScreenState extends State<GuestbookScreen> {
-  final TextEditingController _messageController = TextEditingController();
-
-  // 방명록 메시지를 Firestore에 추가하는 함수
-  void _addMessage(BuildContext dialogContext) {
-    final message = _messageController.text;
-    if (message.isNotEmpty) {
-      FirebaseFirestore.instance.collection('guestbook').add({
-        'text': message,
-        'createdAt': Timestamp.now(), // 현재 시간을 기록
-      });
-      _messageController.clear(); // 입력창 비우기
-      Navigator.of(dialogContext).pop(); // 팝업 닫기
-    }
-  }
-
-  // 글쓰기 팝업을 띄우는 함수
   void _showAddMessageDialog() {
+    final messageController = TextEditingController();
     showDialog(
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('방명록 작성'),
+          title: const Text('기도제목 작성'),
           content: TextField(
-            controller: _messageController,
-            decoration: const InputDecoration(hintText: "메시지를 입력하세요"),
+            controller: messageController,
+            decoration: const InputDecoration(hintText: "기도제목을 입력하세요"),
             autofocus: true,
           ),
           actions: [
             TextButton(
               onPressed: () {
-                _messageController.clear();
                 Navigator.of(dialogContext).pop();
               },
               child: const Text('취소'),
             ),
             TextButton(
-              onPressed: () => _addMessage(dialogContext),
+              onPressed: () async {
+                final message = messageController.text;
+                // 현재 로그인한 사용자 정보 가져오기
+                final user = FirebaseAuth.instance.currentUser;
+
+                if (message.isNotEmpty && user != null) {
+                  try {
+                    // Firestore에 사용자 정보와 함께 저장
+                    await FirebaseFirestore.instance
+                        .collection('guestbook')
+                        .add({
+                      'text': message,
+                      'createdAt': Timestamp.now(),
+                      'authorName': user.displayName ?? '이름없음', // 사용자 이름
+                      'authorUid': user.uid, // 사용자 고유 ID
+                    });
+
+                    if (mounted) Navigator.of(dialogContext).pop();
+                  } catch (e) {
+                    print('메시지 저장 중 에러 발생: $e');
+                  }
+                }
+              },
               child: const Text('저장'),
             ),
           ],
@@ -154,56 +228,67 @@ class _GuestbookScreenState extends State<GuestbookScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // 현재 로그인 상태를 확인
+    final user = FirebaseAuth.instance.currentUser;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('온라인 방명록'),
+        title: const Text('기도의 벽'),
+        actions: [
+          // 로그인 상태일 때만 로그아웃 버튼 표시
+          if (user != null)
+            IconButton(
+              icon: const Icon(Icons.logout),
+              onPressed: () async {
+                await GoogleSignIn().signOut();
+                await FirebaseAuth.instance.signOut();
+              },
+            ),
+        ],
       ),
-      // StreamBuilder: Firestore 데이터를 실시간으로 감지하고 화면을 업데이트
       body: StreamBuilder<QuerySnapshot>(
-        // 'guestbook' 컬렉션의 데이터를 'createdAt' 필드 기준으로 내림차순(최신순) 정렬
         stream: FirebaseFirestore.instance
             .collection('guestbook')
             .orderBy('createdAt', descending: true)
             .snapshots(),
         builder: (context, snapshot) {
-          // 데이터 로딩 중일 때
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
-          // 데이터가 없을 때
           if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return const Center(child: Text('아직 등록된 메시지가 없습니다.'));
+            return const Center(child: Text('아직 등록된 기도제목이 없습니다.'));
           }
-          // 데이터가 있을 때 목록을 보여줌
           return ListView(
-            padding: const EdgeInsets.only(bottom: 80), // FAB에 가려지지 않도록 패딩 추가
+            padding: const EdgeInsets.only(bottom: 80),
             children: snapshot.data!.docs.map((DocumentSnapshot document) {
               Map<String, dynamic> data =
                   document.data()! as Map<String, dynamic>;
+              // 작성자 이름 표시
+              final authorName = data['authorName'] ?? '익명';
+
               return ListTile(
                 title: Text(data['text']),
                 subtitle: Text(
-                  // 타임스탬프 데이터를 날짜/시간 형식으로 변환
-                  DateFormat('y년 M월 d일 a h:mm', 'ko')
-                      .format((data['createdAt'] as Timestamp).toDate()),
+                  '$authorName · ${DateFormat('y. M. d. a h:mm', 'ko').format((data['createdAt'] as Timestamp).toDate())}',
                 ),
               );
             }).toList(),
           );
         },
       ),
-      // 글쓰기 버튼
-      floatingActionButton: FloatingActionButton(
-        onPressed: _showAddMessageDialog,
-        child: const Icon(Icons.add),
-      ),
+      // 로그인 상태일 때만 글쓰기 버튼 표시
+      floatingActionButton: user != null
+          ? FloatingActionButton(
+              onPressed: _showAddMessageDialog,
+              child: const Icon(Icons.add),
+            )
+          : null,
     );
   }
 }
 
-// ===================================================================
-// ## 1. 캘린더 화면 (기존 코드와 동일) ##
-// ===================================================================
+// (이하 캘린더, 메모 목록, 교회소식 화면 코드는 이전과 거의 동일합니다)
+
 class CalendarView extends StatefulWidget {
   const CalendarView({super.key});
   @override
@@ -229,32 +314,29 @@ class _CalendarViewState extends State<CalendarView> {
         count++;
       }
     }
-    setState(() {
-      _currentMonthCount = count;
-    });
+    if (mounted) setState(() => _currentMonthCount = count);
   }
 
   Future<void> _loadMeditatedDays() async {
     final prefs = await SharedPreferences.getInstance();
     final savedDays = prefs.getStringList('meditatedDays') ?? [];
-    setState(() {
-      _meditatedDays = Set.from(savedDays);
-    });
-    _updateCurrentMonthCount(_focusedDay);
+    if (mounted) {
+      setState(() {
+        _meditatedDays = Set.from(savedDays);
+      });
+      _updateCurrentMonthCount(_focusedDay);
+    }
   }
 
   void _showMeditationDialog(DateTime day) async {
-    // mounted 속성 확인을 위해 context를 미리 저장
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
-
     final prefs = await SharedPreferences.getInstance();
     final dayString = DateFormat('yyyy-MM-dd').format(day);
     final savedMemo = prefs.getString('${dayString}_memo') ?? '';
     final memoController = TextEditingController(text: savedMemo);
     bool isMeditated = _meditatedDays.contains(dayString);
 
-    if (!mounted) return; // 비동기 작업 후 위젯이 사라졌으면 아무것도 하지 않음
+    if (!mounted) return;
 
     showDialog(
       context: context,
@@ -275,9 +357,7 @@ class _CalendarViewState extends State<CalendarView> {
                         size: 50,
                       ),
                       onPressed: () {
-                        setDialogState(() {
-                          isMeditated = !isMeditated;
-                        });
+                        setDialogState(() => isMeditated = !isMeditated);
                       },
                     ),
                     const SizedBox(height: 10),
@@ -296,20 +376,20 @@ class _CalendarViewState extends State<CalendarView> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                  },
+                  onPressed: () => Navigator.of(context).pop(),
                   child: const Text('취소'),
                 ),
                 TextButton(
                   onPressed: () async {
-                    setState(() {
-                      if (isMeditated) {
-                        _meditatedDays.add(dayString);
-                      } else {
-                        _meditatedDays.remove(dayString);
-                      }
-                    });
+                    if (mounted) {
+                      setState(() {
+                        if (isMeditated) {
+                          _meditatedDays.add(dayString);
+                        } else {
+                          _meditatedDays.remove(dayString);
+                        }
+                      });
+                    }
                     await prefs.setStringList(
                         'meditatedDays', _meditatedDays.toList());
                     await prefs.setString(
@@ -336,9 +416,7 @@ class _CalendarViewState extends State<CalendarView> {
           IconButton(
             icon: const Icon(Icons.today),
             onPressed: () {
-              setState(() {
-                _focusedDay = DateTime.now();
-              });
+              setState(() => _focusedDay = DateTime.now());
               _updateCurrentMonthCount(DateTime.now());
             },
           ),
@@ -366,9 +444,7 @@ class _CalendarViewState extends State<CalendarView> {
                 _updateCurrentMonthCount(focusedDay);
               },
               onDaySelected: (selectedDay, focusedDay) {
-                setState(() {
-                  _focusedDay = focusedDay;
-                });
+                setState(() => _focusedDay = focusedDay);
                 _showMeditationDialog(selectedDay);
               },
               calendarBuilders: CalendarBuilders(
@@ -386,9 +462,7 @@ class _CalendarViewState extends State<CalendarView> {
                     margin: const EdgeInsets.all(4.0),
                     alignment: Alignment.center,
                     decoration: const BoxDecoration(
-                      color: Colors.black26,
-                      shape: BoxShape.circle,
-                    ),
+                        color: Colors.black26, shape: BoxShape.circle),
                     child: _meditatedDays.contains(dayString)
                         ? const Icon(Icons.favorite, color: Colors.red)
                         : Text(day.day.toString(),
@@ -419,12 +493,8 @@ class _CalendarViewState extends State<CalendarView> {
   }
 }
 
-// ===================================================================
-// ## 3. 교회 소식 화면 (링크 연결 버튼) ##
-// ===================================================================
 class NotionLinkScreen extends StatelessWidget {
   const NotionLinkScreen({super.key});
-
   Future<void> _launchNotionUrl() async {
     final Uri url =
         Uri.parse('https://orosi.notion.site/1dc6f70e570c4a36bcf66dc7efb04318');
@@ -436,41 +506,27 @@ class NotionLinkScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('교회 소식'),
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.article_outlined, size: 80, color: Colors.grey),
-            const SizedBox(height: 20),
-            const Text(
-              '교회 주보, 소식 등을 보려면\n아래 버튼을 눌러주세요.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16),
-            ),
-            const SizedBox(height: 30),
-            ElevatedButton.icon(
+        appBar: AppBar(title: const Text('교회 소식')),
+        body: Center(
+            child:
+                Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const Icon(Icons.article_outlined, size: 80, color: Colors.grey),
+          const SizedBox(height: 20),
+          const Text('교회 주보, 소식 등을 보려면\n아래 버튼을 눌러주세요.',
+              textAlign: TextAlign.center, style: TextStyle(fontSize: 16)),
+          const SizedBox(height: 30),
+          ElevatedButton.icon(
               icon: const Icon(Icons.open_in_new),
               label: const Text('교회 소식 페이지 열기'),
               onPressed: _launchNotionUrl,
               style: ElevatedButton.styleFrom(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                textStyle: const TextStyle(fontSize: 16),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  textStyle: const TextStyle(fontSize: 16)))
+        ])));
   }
 }
 
-// ===================================================================
-// ## 4. 메모 목록 페이지 (기존 코드와 동일) ##
-// ===================================================================
 class MemoListPage extends StatefulWidget {
   const MemoListPage({super.key});
   @override
@@ -479,7 +535,6 @@ class MemoListPage extends StatefulWidget {
 
 class _MemoListPageState extends State<MemoListPage> {
   Map<String, String> _memos = {};
-
   @override
   void initState() {
     super.initState();
@@ -490,7 +545,6 @@ class _MemoListPageState extends State<MemoListPage> {
     final prefs = await SharedPreferences.getInstance();
     final allKeys = prefs.getKeys();
     final Map<String, String> tempMemos = {};
-
     for (String key in allKeys) {
       if (key.endsWith('_memo')) {
         final memoContent = prefs.getString(key) ?? '';
@@ -500,61 +554,42 @@ class _MemoListPageState extends State<MemoListPage> {
         }
       }
     }
-
     setState(() {
       _memos = Map.fromEntries(
-        tempMemos.entries.toList()..sort((a, b) => b.key.compareTo(a.key)),
-      );
+          tempMemos.entries.toList()..sort((a, b) => b.key.compareTo(a.key)));
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('나의 묵상 기록'),
-      ),
-      body: _memos.isEmpty
-          ? const Center(
-              child: Text(
-                '아직 작성된 메모가 없습니다.',
-                style: TextStyle(fontSize: 16),
-              ),
-            )
-          : ListView.builder(
-              itemCount: _memos.length,
-              itemBuilder: (context, index) {
-                final dateString = _memos.keys.elementAt(index);
-                final memoContent = _memos.values.elementAt(index);
-                final displayDate =
-                    DateFormat('y년 M월 d일').format(DateTime.parse(dateString));
-
-                return Card(
-                  margin:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          displayDate,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          memoContent,
-                          style: const TextStyle(fontSize: 14),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-    );
+        appBar: AppBar(title: const Text('나의 묵상 기록')),
+        body: _memos.isEmpty
+            ? const Center(
+                child: Text('아직 작성된 메모가 없습니다.', style: TextStyle(fontSize: 16)))
+            : ListView.builder(
+                itemCount: _memos.length,
+                itemBuilder: (context, index) {
+                  final dateString = _memos.keys.elementAt(index);
+                  final memoContent = _memos.values.elementAt(index);
+                  final displayDate =
+                      DateFormat('y년 M월 d일').format(DateTime.parse(dateString));
+                  return Card(
+                      margin: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(displayDate,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16)),
+                                const SizedBox(height: 8),
+                                Text(memoContent,
+                                    style: const TextStyle(fontSize: 14))
+                              ])));
+                }));
   }
 }
