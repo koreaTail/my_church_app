@@ -44,6 +44,7 @@ dependencies:
   cloud_firestore: ^5.4.0
   firebase_auth: ^5.2.0
   google_sign_in: ^6.2.2
+  youtube_player_flutter: ^9.0.4
 
 dev_dependencies:
   flutter_test:
